@@ -1,3 +1,4 @@
+// Middleware for the net/http library
 package middleware
 
 import (
@@ -27,8 +28,9 @@ func (wrapper *gzipWrapper) WriteHeader(status int) {
 	wrapper.w.WriteHeader(status)
 }
 
-// GZip returns a handler which gzips the response for all requests which
-// accept that encoding
+// GZip returns a handler which gzip's the response for all requests which
+// accept that encoding. A gzip'ed ResponseWriter does not implement the
+// http.Hijacker interface.
 func GZip(h http.Handler) http.Handler {
 	hfunc := func(w http.ResponseWriter, r *http.Request) {
 		ae := strings.Split(r.Header.Get("Accept-Encoding"), ",")
