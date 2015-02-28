@@ -2,35 +2,63 @@
 package middleware
 
 import (
+	"bufio"
 	"compress/gzip"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type gzipWrapper struct {
-	w   http.ResponseWriter
-	gzw *gzip.Writer // always wraps the ResponseWriter
+	wr         http.ResponseWriter // the underlying ResponseWriter
+	gzw        *gzip.Writer        // gzip wrapper on the ResponseWriter
+	mu         *sync.Mutex         // to accommodate concurrent writes to the wrapper
+	firstWrite bool                // is this the first call to Write()?
 }
 
-func (wrapper *gzipWrapper) Header() http.Header {
-	return wrapper.w.Header()
-}
+func (w *gzipWrapper) Header() http.Header    { return w.wr.Header() }
+func (w *gzipWrapper) WriteHeader(status int) { w.wr.WriteHeader(status) }
 
 func (wrapper *gzipWrapper) Write(p []byte) (int, error) {
-	// this is the same thing the default ResponseWriter does
-	if "" == wrapper.Header().Get("Content-Type") {
-		wrapper.Header().Set("Content-Type", http.DetectContentType(p))
+	// do we need to check the content type?
+	if !wrapper.firstWrite {
+		return wrapper.gzw.Write(p)
 	}
+	wrapper.mu.Lock()
+	if wrapper.firstWrite {
+		// Because gzipped content is written to the underlying writer, we have
+		// to detect the content type of the non-gzipped bytes.
+		if "" == wrapper.Header().Get("Content-Type") {
+			contentType := ""
+			if len(p) > 512 {
+				contentType = http.DetectContentType(p[:512])
+			} else {
+				contentType = http.DetectContentType(p)
+			}
+			wrapper.Header().Set("Content-Type", contentType)
+		}
+	}
+	wrapper.firstWrite = false
+	wrapper.mu.Unlock()
 	return wrapper.gzw.Write(p)
 }
 
-func (wrapper *gzipWrapper) WriteHeader(status int) {
-	wrapper.w.WriteHeader(status)
+// gzipHijacker implements the http.Hijacker interface for ResponseWriters
+// which also implement it.
+type gzipHijacker struct {
+	*gzipWrapper
+	hijacker http.Hijacker
+	hijacked bool
+}
+
+func (wrapper *gzipHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	wrapper.hijacked = true
+	return wrapper.hijacker.Hijack()
 }
 
 // GZip returns a handler which gzip's the response for all requests which
-// accept that encoding. A gzip'ed ResponseWriter does not implement the
-// http.Hijacker interface.
+// accept that encoding.
 func GZip(h http.Handler) http.Handler {
 	hfunc := func(w http.ResponseWriter, r *http.Request) {
 		ae := strings.Split(r.Header.Get("Accept-Encoding"), ",")
@@ -44,8 +72,21 @@ func GZip(h http.Handler) http.Handler {
 		if acceptsGzip {
 			w.Header().Set("Content-Encoding", "gzip")
 			gzw := gzip.NewWriter(w)
-			defer gzw.Close()
-			w = &gzipWrapper{w, gzw}
+			wrapper := &gzipWrapper{w, gzw, &sync.Mutex{}, true}
+			hijacker, ok := w.(http.Hijacker)
+			if ok {
+				// if writer accepts hijacking pass a hijackable wrapper
+				hijackableWrapper := &gzipHijacker{wrapper, hijacker, false}
+				defer func() {
+					if !hijackableWrapper.hijacked {
+						gzw.Close()
+					}
+				}()
+				w = hijackableWrapper
+			} else {
+				defer gzw.Close()
+				w = wrapper
+			}
 		}
 		h.ServeHTTP(w, r)
 	}
