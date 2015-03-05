@@ -120,6 +120,7 @@ func Log(log io.Writer, h http.Handler) http.Handler {
 		if origin == "" {
 			origin = r.RemoteAddr
 		}
+		userAgent := r.UserAgent()
 		wrapper := &statusWrapper{w, defaultStatus, 0}
 		hijacker, ok := w.(http.Hijacker)
 		if ok {
@@ -134,13 +135,14 @@ func Log(log io.Writer, h http.Handler) http.Handler {
 		args := []interface{}{
 			start.Format("2006/01/02 15:04:05"),
 			method,
-			path,
 			wrapper.status,
+			path,
 			origin,
 			wrapper.nbytes,
 			diff.String(),
+			userAgent,
 		}
-		fmt.Fprintf(log, "%s %s %s %d %d %s %s\n", args...)
+		fmt.Fprintf(log, "%s %s %d %s %s %d %s '%s'\n", args...)
 	}
 	return http.HandlerFunc(hf)
 }
