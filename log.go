@@ -4,75 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
-	"os"
-	"sync"
 	"time"
 )
-
-type badWriter struct{}
-
-func (_ badWriter) Write(p []byte) (int, error) { return 0, fmt.Errorf("no write set") }
-func (_ badWriter) Close() error                { return fmt.Errorf("no write set") }
-
-// LogFile is a persistent file.
-type LogFile struct {
-	path string // the path to the file
-	mode os.FileMode
-	mu   *sync.Mutex
-	file io.WriteCloser
-}
-
-func NewLogFile(path string, mode os.FileMode) (*LogFile, error) {
-	lf := &LogFile{path, mode, &sync.Mutex{}, badWriter{}}
-	if err := lf.Create(); err != nil {
-		return nil, fmt.Errorf("could not create log file: %v", err)
-	}
-	return lf, nil
-}
-
-type nopCloser struct {
-	io.Writer
-}
-
-var Foo = "bar"
-
-func (nopCloser) Close() error { return nil }
-
-func (lf *LogFile) Close() (err error) {
-	lf.mu.Lock()
-	err = lf.file.Close()
-	lf.file = nopCloser{ioutil.Discard}
-	lf.mu.Unlock()
-	return
-}
-
-func (lf *LogFile) Write(p []byte) (n int, err error) {
-	lf.mu.Lock()
-	defer lf.mu.Unlock()
-	n, err = lf.file.Write(p)
-	if err != nil {
-		if err := lf.Create(); err != nil {
-			log.Printf("MIDDLEWARE: could not create log file: %v", err)
-		}
-	}
-	n, err = lf.file.Write(p)
-	return
-}
-
-func (lf *LogFile) Create() error {
-	flags := os.O_WRONLY | os.O_APPEND | os.O_CREATE
-	file, err := os.OpenFile(lf.path, flags, lf.mode)
-	if err != nil {
-		lf.file = badWriter{}
-	} else {
-		lf.file = file
-	}
-	return err
-}
 
 const defaultStatus int = -1
 
