@@ -145,3 +145,75 @@ func TestGzipHijacker(t *testing.T) {
 		t.Errorf("response from encoded request is wrong")
 	}
 }
+
+// TestGzip ensures that requests with 'Accept-Encoding: gzip' produce a
+// gzipped response.
+func TestGzipTwice(t *testing.T) {
+	// ensure the data is long enough that there are multiple writes to the connection
+	nbytes := 65536
+	data := make([]byte, nbytes)
+	n, err := rand.Read(data)
+	if err != nil {
+		t.Errorf("error reading random bytes: %v", err)
+		return
+	}
+	if n != nbytes {
+		t.Errorf("short read")
+		return
+	}
+	hf := func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
+			t.Errorf("error writing to ResponseWriter: %v", err)
+		}
+	}
+	h := http.HandlerFunc(hf)
+	// GZIP twice
+	s := httptest.NewServer(GZip(GZip(h)))
+	defer s.Close()
+	// GET request with no Accept-Encoding header
+	resp, err := http.Get(s.URL + "/")
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if string(body) != string(data) {
+		t.Errorf("response from non encoded request is wrong")
+	}
+	req, err := http.NewRequest("GET", s.URL+"/", nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	// GET request with an Accept-Encoding header
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer resp.Body.Close()
+	ce := resp.Header.Get("Content-Encoding")
+	if ce != "gzip" {
+		t.Errorf("content-encoding is not gzip: '%s'", ce)
+		return
+	}
+	r, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		t.Errorf("could not create gzip reader: %v", err)
+		return
+	}
+	body, err = ioutil.ReadAll(r)
+	if err != nil {
+		t.Errorf("cound not read from gzip reader: %v", err)
+		return
+	}
+	if string(body) != string(data) {
+		t.Errorf("response from encoded request is wrong")
+	}
+}

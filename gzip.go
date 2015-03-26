@@ -70,6 +70,9 @@ func GZip(h http.Handler) http.Handler {
 			}
 		}
 		if acceptsGzip {
+			// To ensure applications further down the line don't attempt to
+			// gzip the response again, remove "Accept-Encoding" header.
+			r.Header.Del("Accept-Encoding")
 			w.Header().Set("Content-Encoding", "gzip")
 			gzw := gzip.NewWriter(w)
 			wrapper := &gzipWrapper{w, gzw, &sync.Mutex{}, true}
