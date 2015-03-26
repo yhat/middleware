@@ -8,14 +8,20 @@ import (
 	"strings"
 )
 
-// ProxyRedirect joins baseURL to the location header of all redirects
-// generated the by handler.
+// ProxyRedirect joins basePath to the location header of all redirects
+// generated the by handler. It also changes the scheme as provided.
+//
+//     p := httputil.NewSingleHostReverseProxy(u)
+//     // force redirects to use https and prepend "/foo/bar" to all paths
+//     h := middleware.ProxyRedirect("https", "/foo/bar", p)
+//
 // TODO: Add refresh header handling
-func ProxyRedirect(baseURL string, handler http.Handler) http.Handler {
+func ProxyRedirect(scheme, basePath string, handler http.Handler) http.Handler {
 	hf := func(w http.ResponseWriter, r *http.Request) {
 		pp := &proxyRedirectWrapper{
-			baseURL: baseURL,
-			wr:      w,
+			scheme:   scheme,
+			basePath: basePath,
+			wr:       w,
 		}
 		hijacker, ok := w.(http.Hijacker)
 		if ok {
@@ -29,8 +35,9 @@ func ProxyRedirect(baseURL string, handler http.Handler) http.Handler {
 }
 
 type proxyRedirectWrapper struct {
-	baseURL string
-	wr      http.ResponseWriter
+	scheme   string
+	basePath string
+	wr       http.ResponseWriter
 }
 
 func (pp *proxyRedirectWrapper) Header() http.Header {
@@ -48,7 +55,10 @@ func (pp *proxyRedirectWrapper) WriteHeader(status int) {
 		location := pp.wr.Header().Get("Location")
 		u, err := url.Parse(location)
 		if err == nil {
-			u.Path = singleJoiningSlash(pp.baseURL, u.Path)
+			if pp.scheme != "" {
+				u.Scheme = pp.scheme
+			}
+			u.Path = singleJoiningSlash(pp.basePath, u.Path)
 			pp.wr.Header().Set("Location", u.String())
 		}
 	}
