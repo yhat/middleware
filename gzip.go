@@ -11,14 +11,20 @@ import (
 )
 
 type gzipWrapper struct {
-	wr         http.ResponseWriter // the underlying ResponseWriter
-	gzw        *gzip.Writer        // gzip wrapper on the ResponseWriter
-	mu         *sync.Mutex         // to accommodate concurrent writes to the wrapper
-	firstWrite bool                // is this the first call to Write()?
+	wr            http.ResponseWriter // the underlying ResponseWriter
+	gzw           *gzip.Writer        // gzip wrapper on the ResponseWriter
+	mu            *sync.Mutex         // to accommodate concurrent writes to the wrapper
+	firstWrite    bool                // is this the first call to Write()?
+	headerWritten bool                // has the header been written?
 }
 
-func (w *gzipWrapper) Header() http.Header    { return w.wr.Header() }
-func (w *gzipWrapper) WriteHeader(status int) { w.wr.WriteHeader(status) }
+func (w *gzipWrapper) Header() http.Header { return w.wr.Header() }
+
+func (w *gzipWrapper) WriteHeader(status int) {
+	w.headerWritten = true
+	w.Header().Set("Content-Encoding", "gzip")
+	w.wr.WriteHeader(status)
+}
 
 func (wrapper *gzipWrapper) Write(p []byte) (int, error) {
 	// do we need to check the content type?
@@ -37,6 +43,9 @@ func (wrapper *gzipWrapper) Write(p []byte) (int, error) {
 				contentType = http.DetectContentType(p)
 			}
 			wrapper.Header().Set("Content-Type", contentType)
+		}
+		if !wrapper.headerWritten {
+			wrapper.WriteHeader(http.StatusOK)
 		}
 	}
 	wrapper.firstWrite = false
@@ -70,12 +79,11 @@ func GZip(h http.Handler) http.Handler {
 			}
 		}
 		if acceptsGzip {
-			// To ensure applications further down the line don't attempt to
-			// gzip the response again, remove "Accept-Encoding" header.
+			// Remove "Accept-Encoding" header to ensure applications further
+			// down the line don't attempt to gzip the response again.
 			r.Header.Del("Accept-Encoding")
-			w.Header().Set("Content-Encoding", "gzip")
 			gzw := gzip.NewWriter(w)
-			wrapper := &gzipWrapper{w, gzw, &sync.Mutex{}, true}
+			wrapper := &gzipWrapper{w, gzw, &sync.Mutex{}, true, false}
 			hijacker, ok := w.(http.Hijacker)
 			if ok {
 				// if writer accepts hijacking pass a hijackable wrapper
