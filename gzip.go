@@ -22,6 +22,9 @@ func (w *gzipWrapper) Header() http.Header { return w.wr.Header() }
 
 func (w *gzipWrapper) WriteHeader(status int) {
 	w.headerWritten = true
+	// No good way of dealing with content-length without buffering the entire
+	// response body
+	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Encoding", "gzip")
 	w.wr.WriteHeader(status)
 }
